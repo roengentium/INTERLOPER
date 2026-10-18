@@ -1,0 +1,11 @@
+{
+    "name": "interloper_hl2",
+    "alias": "interlope",
+    "display_name": "Interloper Demo Generator",
+    "description": "Generates and records INTERLOPE demos",
+    "author": "rg",
+    "url": "",
+    "log_tag": "INTERLOPE",
+    "license": "Unlicensed / personal project",
+    "version": "0.1.0.{{git-shorthash}}"
+}

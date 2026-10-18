@@ -1,0 +1,5 @@
+"Metamod Plugin"
+{
+	"alias"		"interlope"
+	"file"		"addons/interloper_hl2"
+}

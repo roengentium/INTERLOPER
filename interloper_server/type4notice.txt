@@ -1,0 +1,1 @@
+type4 is kind of broken right now, there is a delay of around 30 to 50 seconds. if anyone can optimize, that will be appricated.
