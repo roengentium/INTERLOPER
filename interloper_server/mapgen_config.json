@@ -1,0 +1,5 @@
+{
+  "hl2":       {"gamedir": "E:\\Half-Life 2\\hl2_complete", "bindir": ""},
+  "portal":    {"gamedir": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Portal\\portal", "bindir": ""},
+  "garrysmod": {"gamedir": "E:\\gmod\\GarrysMod\\garrysmod", "bindir": ""}
+}

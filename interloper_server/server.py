@@ -81,6 +81,7 @@ from generators.type3 import generate_type3
 from generators.type6 import generate_type6
 from generators.type7 import generate_type7
 from ollama_brain import OllamaBrain
+from llm_brain import OpenAIBrain
 from recording import Recording
 from repo import Repo
 from type4_policy import LetsPlayer, parse_obs
@@ -112,6 +113,7 @@ class InterloperServer:
         self.port = port
         self.debug = debug
         self.repo = Repo()
+        # Server-wide knobs, changeable at runtime from the server console.
         self.forced_type = None        # None = weighted random
         self.repeat_chance = 0.1       # chance of re-serving a stored commit
         self.default_opts = {}         # generator options applied to every request
@@ -119,6 +121,9 @@ class InterloperServer:
         self.last = None               # last Recording served (for the `last` command)
         self.ollama_model = None       # e.g. "llama3": gives Type 4 an LLM brain
         self.ollama_host = "http://127.0.0.1:11434"
+        self.llm_url = None            # OpenAI-compatible API base, e.g. https://api.voidai.app/v1
+        self.llm_model = None
+        self.llm_key = os.environ.get("INTERLOPER_LLM_KEY", "")
         self.live_log = []             # summaries of finished Type 4 sessions
         self._next_pull_port = PULL_PORT_RANGE_START
         self._pull_port_lock = threading.Lock()
@@ -263,7 +268,15 @@ class InterloperServer:
     # -- Type 4: live sessions --------------------------------------------
 
     def _make_brain(self, opts):
-        mode = str(opts.pop("brain", "ollama" if self.ollama_model else "off")).lower()
+        default = "llm" if self.llm_url and self.llm_model else ("ollama" if self.ollama_model else "off")
+        mode = str(opts.pop("brain", default)).lower()
+        if mode == "llm":
+            if not (self.llm_url and self.llm_model):
+                log.warning("brain=llm but no --llm-url/--llm-model set; playing on rules")
+                return None
+            log.info("type 4 brain: API model %s at %s (falls back to rules if it does not answer)",
+                     self.llm_model, self.llm_url)
+            return OpenAIBrain(self.llm_url, self.llm_model, self.llm_key)
         model = str(opts.pop("model", self.ollama_model or "llama3"))
         host = str(opts.pop("ollama_host", self.ollama_host))
         if mode in ("off", "0", "none", "rules", "false"):
@@ -479,17 +492,48 @@ class InterloperServer:
             else:
                 self.ollama_model = rest
             return f"ollama brain for type 4: {self.ollama_model or 'off (rules only)'}"
+        if cmd == "map":
+            import shlex
+            import make_map
+            from mapgen.llm import LLMClient
+            try:
+                argv = shlex.split(rest)
+            except ValueError as exc:
+                return f"bad arguments: {exc}"
+            if not argv or argv[0].startswith("-"):
+                return "usage: map <game> [--seed N] [--mode procedural|theme|llm] [--hint \"...\"] [--compile] ..."
+            client = LLMClient.from_server(self)
+
+            def work():
+                try:
+                    for line in make_map.run(["--game"] + argv, client).splitlines():
+                        log.info("map: %s", line)
+                except SystemExit:
+                    log.warning("map: bad arguments (try: map hl2 --seed 7 --compile)")
+                except Exception as exc:                 # keep the server alive whatever happens
+                    log.warning("map: failed: %s", exc)
+            threading.Thread(target=work, daemon=True).start()
+            return "building map in the background; progress appears in this window"
+        if cmd == "llm":
+            if rest.lower() in ("", "off", "0"):
+                self.llm_url = self.llm_model = None
+            else:
+                parts = rest.split()
+                if len(parts) != 2:
+                    return "usage: llm <base-url> <model> | llm off"
+                self.llm_url, self.llm_model = parts[0].rstrip("/"), parts[1]
+            return f"api brain for type 4: {self.llm_model or 'off'}" + (f" at {self.llm_url}" if self.llm_url else "")
         if cmd == "live":
             return "\n".join(self.live_log[-5:]) or "no type 4 sessions yet"
         if cmd == "status":
             return (f"forced type: {self.forced_type or 'random'} | repeat chance: {self.repeat_chance} | "
                     f"options: {self.default_opts or '(none)'} | dump: {self.dump_dir or 'off'} | "
-                    f"stored commits: {len(self.repo)} | ollama: {self.ollama_model or 'off'}")
+                    f"stored commits: {len(self.repo)} | ollama: {self.ollama_model or 'off'} | api: {self.llm_model or 'off'}")
         if cmd == "list":
             return ("types: 1 twisting, 2 void/frozen+kill, 3 aimless gameplay, 4 live 'let's player' "
                     "(needs the latest plugin), 6 editor/deleter, 7 cubemap idle (5 not built -> type 2)")
         return ("commands: type <n|random> | repeat <on|off|0-1> | opts k=v ... | opts clear | "
-                "commits | last | live | ollama <model|off> | dump [dir] | status | list | help")
+                "commits | last | live | ollama <model|off> | llm <url> <model>|off | map <game> [opts] | dump [dir] | status | list | help")
 
     def _open_pull_listener(self):
         """Reserve the next free pull port and return (port, listening socket).
@@ -573,6 +617,9 @@ def main():
     parser.add_argument("--ollama", metavar="MODEL", default=None,
                         help="give Type 4 an LLM brain from a local Ollama model, e.g. --ollama llama3")
     parser.add_argument("--ollama-host", default="http://127.0.0.1:11434")
+    parser.add_argument("--llm-url", default=None, metavar="URL",
+                        help="OpenAI-compatible API base for the Type 4 brain, e.g. https://<provider>/v1")
+    parser.add_argument("--llm-model", default=None, metavar="MODEL", help="model name for --llm-url")
     parser.add_argument("--no-console", action="store_true",
                         help="don't read commands from the server window's stdin")
     args = parser.parse_args()
@@ -586,6 +633,10 @@ def main():
     srv.dump_dir = args.dump
     srv.ollama_model = args.ollama
     srv.ollama_host = args.ollama_host
+    srv.llm_url = args.llm_url.rstrip("/") if args.llm_url else None
+    srv.llm_model = args.llm_model
+    if srv.llm_url and not srv.llm_key:
+        log.warning("--llm-url set but INTERLOPER_LLM_KEY is empty: requests will go out without a key")
     if not args.no_console and sys.stdin and sys.stdin.isatty():
         threading.Thread(target=srv.console_loop, daemon=True).start()
         log.info("server console ready: type 'help' here (e.g. 'type 1', 'repeat off', 'status')")
