@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-export_json.py
+export_json.py - generate one demo and write it as JSON for the Garry's Mod addon.
+
 Run it from inside the interloper_server folder (imports are flat), then in GMod
 type `interlope` in the console.
 

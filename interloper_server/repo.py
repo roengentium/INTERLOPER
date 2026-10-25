@@ -1,7 +1,9 @@
 """
 repo.py
 
-"The Repo" - basically a shitter version of FSKY.
+"The Repo" - the in-memory store of committed demos, matching the ARG's own
+fiction (server messages reference demos coming from a repository, and the
+same commit number can be pulled multiple times to return an identical demo).
 
 This is intentionally simple (dict + lock) for now. A persistence layer
 (sqlite, disk cache of serialized Recordings) is a drop-in swap later without
@@ -63,6 +65,9 @@ class Repo:
             return self._commits.get(commit_id)
 
     def pull_random_existing(self, repeat_chance: float = 0.1) -> Tuple[Optional[str], Optional[Recording]]:
+        """With some probability, re-serve a previously committed demo instead
+        of generating a new one. Models the lore detail that the same commit
+        number can return an identical demo more than once."""
         with self._lock:
             if self._commits and random.random() < repeat_chance:
                 commit_id = random.choice(list(self._commits.keys()))

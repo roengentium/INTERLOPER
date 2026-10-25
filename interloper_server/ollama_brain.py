@@ -1,3 +1,22 @@
+"""
+ollama_brain.py
+
+Optional "brain" for the Type 4 player: a small local model served by Ollama
+(default llama3 on localhost:11434). Every couple of seconds it is shown a
+short text description of the world and picks ONE high-level intent. The rule
+controller in type4_policy.py does all the steering, aiming and button work,
+so a slow, wrong or missing model never freezes or breaks the demo: the player
+just keeps playing on rules alone.
+
+Why text and not pixels: llama3 is text-only, and a vision model needs seconds
+per frame. The game plugin already sends distances, rays and nearby entities,
+which is plenty for "should I go grab that, press that, fight, or look around".
+
+Run Ollama yourself (`ollama run llama3` once to download it), then start the
+server with:   py server.py --ollama llama3
+or per request in the game:   interlope 4 brain=ollama model=llama3
+"""
+
 import json
 import logging
 import math
@@ -34,7 +53,8 @@ def describe(o, profile) -> str:
     lines = [f"Game: {profile.name}. Health {o.hp}. Holding {o.weapon or 'nothing'}."]
     lines.append(f"Clear space: ahead {int(o.rf)}, left {int(o.rl)}, right {int(o.rr)}"
                  + (". Ledge ahead." if o.fd > 170 else "."))
-    near = sorted(o.ents, key=lambda e: e.dist_from(o))[:6]
+    near = sorted((e for e in o.ents if not (o.weapon and e.cls == o.weapon)),
+                  key=lambda e: e.dist_from(o))[:6]
     if not near:
         lines.append("Nothing interesting nearby.")
     for e in near:
@@ -80,23 +100,27 @@ class OllamaBrain:
                 return self._intent
         return None
 
+    def _request(self, prompt: str) -> str:
+        """One round trip to the model; returns the raw reply text. Subclasses swap the API."""
+        body = json.dumps({
+            "model": self.model,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.9, "num_predict": 60},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        }).encode()
+        req = urllib.request.Request(self.host + "/api/chat", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace"))
+        return data.get("message", {}).get("content", "")
+
     def _query(self, prompt: str):
         try:
-            body = json.dumps({
-                "model": self.model,
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0.9, "num_predict": 60},
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-            }).encode()
-            req = urllib.request.Request(self.host + "/api/chat", data=body,
-                                         headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
-            text = data.get("message", {}).get("content", "")
+            text = self._request(prompt)
             parsed = json.loads(text)
             intent = str(parsed.get("intent", "")).strip().lower()
             if intent not in INTENTS:

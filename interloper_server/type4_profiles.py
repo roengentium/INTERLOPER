@@ -1,7 +1,7 @@
 """
 type4_profiles.py
 
-Perchance knowledge for Type 4 ("real gameplay") live player: which
+Per-game knowledge for the Type 4 ("real gameplay") live player: which
 entity classes are enemies, pickups, things to press, and how the game's
 weapon behaves. The plugin sends the game folder name (game=portal, game=tf,
 game=hl2...), the server picks a profile here. Unknown games get the generic

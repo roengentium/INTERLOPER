@@ -1,3 +1,38 @@
+"""
+recording.py
+
+Engine-agnostic data model for a generated "demo". This is the one format
+every generator (Type 1-7) produces and every game client consumes.
+
+Serialization is deliberately plain fixed-size binary structs, NOT JSON or
+protobuf. This is a compatibility choice: a client built against an old-era
+Source SDK toolchain can parse this with straightforward struct reads and
+no extra dependencies.
+
+Wire layout (all little-endian):
+
+  Header:
+    4s   magic              b"ILDR"
+    B    demo_type          1-7
+    B    commit_format      0 = standard "##-##-##", 1 = TODAY (Type 7 only)
+    8s   commit_number      ascii, null-padded (ignored by client if TODAY)
+    I    tick_count
+
+  Ticks (tick_count * 40 bytes each):
+    3f   origin (x, y, z)
+    3f   angles (pitch, yaw, roll)
+    I    buttons (bitmask, engine-defined meaning on the client side)
+    3f   move (forward, side, up)
+
+  Event section:
+    I    event_count
+    Events (variable length):
+      I  tick_index
+      B  event_type       see EventType
+      B  param_len
+      *  param bytes (param_len bytes, meaning depends on event_type)
+"""
+
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag

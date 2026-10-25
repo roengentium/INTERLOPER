@@ -8,7 +8,7 @@ up items, presses buttons, fights what it can see, and sometimes stops to
 look around like a YouTuber narrating. It is still human and imperfect:
 reaction delay, aim wobble, getting stuck, bad weapon choices.
 
-It is a closed loop. The game plugin sends an observation about every 6 ticks
+It is closed loop. The game plugin sends an observation about every 6 ticks
 (text line, see parse_obs) and gets back an action (buttons + where to look).
 Between observations the plugin keeps holding the last buttons and eases the
 camera toward the requested angles, so the model/policy never has to run at
@@ -183,6 +183,8 @@ class LetsPlayer:
         self.next_jump = 0.0
         self.next_use = 0.0
         self.used: Dict[int, float] = {}
+        self.ignored: Dict[int, float] = {}       # pickups we gave up on -> ignore until this time
+        self.item_arrived: Dict[int, float] = {}  # when we first got within reach of a pickup
         self.carrying_until = 0.0
         self.next_portal = 0.0
         self.portal_flip = False
@@ -266,6 +268,18 @@ class LetsPlayer:
 
         item = self._pick_item(o, intent)
         if item is not None:
+            key = int(item.x) * 31 + int(item.y)
+            if item.flat_dist_from(o) < 70.0:
+                # Standing on a pickup that doesn't go away (the gun we already hold, something
+                # we can't take): after a moment give up on it so we don't freeze there forever.
+                first = self.item_arrived.setdefault(key, now)
+                if now - first > 1.2:
+                    self.ignored[key] = now + 120.0
+                    self.item_arrived.pop(key, None)
+                    item = None
+            else:
+                self.item_arrived.pop(key, None)
+        if item is not None:
             return self._go_to(o, act, item, reach=70.0, tag="pickups")
 
         usable = self._pick_usable(o, intent)
@@ -318,6 +332,10 @@ class LetsPlayer:
         limit = 1100.0 if intent == "collect" else 650.0
         for e in o.ents:
             if not _starts(e.cls, self.profile.item_prefixes):
+                continue
+            if o.weapon and e.cls == o.weapon:          # that's the weapon in our hands
+                continue
+            if self.ignored.get(int(e.x) * 31 + int(e.y), 0.0) > o.gt:
                 continue
             d = e.flat_dist_from(o)
             if d < limit and e.vis and d < bd and abs(e.z - o.z) < 90:
@@ -416,7 +434,7 @@ class LetsPlayer:
 
     def _portal_fire(self, o: Obs, buttons: int) -> int:
         now = o.gt
-        if now >= self.next_portal and o.rf < 900 and o.hc in ("worldspawn", "func_brush", "prop_dynamic"):
+        if now >= self.next_portal and o.rf < 900 and o.hc in ("worldspawn", "func_brush", "prop_dynamic", "func_wall", "prop_static", "prop_dynamic_override"):
             self.portal_flip = not self.portal_flip
             self.next_portal = now + self.rng.uniform(2.5, 7.0)
             self.stats["portals"] += 1
